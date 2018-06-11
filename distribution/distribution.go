@@ -100,6 +100,17 @@ func (d Distribution) bucketStdDev() []float64 {
 	return stdDev
 }
 
+func (d Distribution) GetFitness() int64 {
+	min := d.BucketsTotal[0]
+	max := min
+	for _, bucket := range d.BucketsTotal {
+		if bucket < min { min = bucket }
+		if bucket > max { max = bucket }
+	}
+
+	return max - min
+}
+
 func (d Distribution) mutateBucketsTopics(buckets, topics []int) {
 
 }

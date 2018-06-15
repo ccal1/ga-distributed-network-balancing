@@ -2,12 +2,13 @@ package kafka
 
 import (
 	"math/rand"
-	"time"
 	"sort"
+	"time"
 )
 
 type Kafka []Topic
 
+// Create new kafka randomly
 func NewRandomKafka(partitions int, topics int) Kafka {
 	seed := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rnd := rand.New(seed)
@@ -17,7 +18,7 @@ func NewRandomKafka(partitions int, topics int) Kafka {
 		kafka[i].Name = string(i)
 		kafka[i].Partitions = make([]Partition, partitions)
 		partitions := kafka[i].Partitions
-		for j := range partitions  {
+		for j := range partitions {
 			partitions[j].Idx = j
 			partitions[j].Value = topicSize * rnd.Intn(100)
 		}
@@ -25,11 +26,13 @@ func NewRandomKafka(partitions int, topics int) Kafka {
 	return kafka
 }
 
+// Get the partitions value
 func (k Kafka) GetTopicsPartition(topic, partition int) int {
 	return k[topic].Partitions[partition].Value
 }
 
-func (k Kafka)Sort() {
+// Sort the partitions by value and the kafka by delta
+func (k Kafka) Sort() {
 	for i := range k {
 		topic := &k[i]
 		sort.Sort(ByValue(topic.Partitions))

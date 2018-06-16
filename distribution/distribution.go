@@ -16,81 +16,78 @@ type Distribution struct {
 	BucketsTotal []int64
 }
 
-type topic struct {
-	topicPos  int
-	partOrder []int
-}
-
-// Return the partition value
-func (t topic) getPartitionSize(partition int) int {
-	k := kafka.GetInstance()
-	return k.GetTopicsPartition(t.topicPos, t.partOrder[partition])
-}
-
 // Sums the values in one computer
 func (d *Distribution) calculateTotals() {
 	if len(d.Topics) == 0 {
 		return
 	}
-	d.BucketsTotal = make([]int64, len(d.Topics[0].partOrder))
+	d.BucketsTotal = make([]int64, len(d.Topics[0].PartOrder))
 	for _, topic := range d.Topics {
-		for i := range topic.partOrder {
+		for i := range topic.PartOrder {
 			d.BucketsTotal[i] += int64(topic.getPartitionSize(i))
 		}
 	}
 }
 
-type bucketTotal struct {
-	total  int64
-	bucket int
+func NewCleanDistribution() Distribution {
+	k := *kafka.GetInstance()
+	dist := Distribution{
+		Topics:       make([]topic, len(k)),
+		BucketsTotal: make([]int64, len(k[0].Partitions)),
+	}
+
+	for topicIdx := 0; topicIdx <= len(k); topicIdx++ {
+		dist.Topics[topicIdx].PartOrder = make([]int, len(k[topicIdx].Partitions))
+		dist.Topics[topicIdx].topicPos = topicIdx
+	}
+	return dist
 }
 
-type byTotal []bucketTotal
-
-// Returns the bucket size
-func (p byTotal) Len() int {
-	return len(p)
-}
-
-// Swaps the partition in one line from kafka
-func (p byTotal) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-// Compares two partitions in the same line from kafka
-func (p byTotal) Less(i, j int) bool {
-	return p[i].total > p[j].total
-}
 
 // Greedy Distribution
 func NewGreedyDistribution() Distribution {
 	k := *kafka.GetInstance()
 
-	distribution := Distribution{
-		Topics:       make([]topic, len(k)),
-		BucketsTotal: make([]int64, len(k[0].Partitions)),
-	}
+	distribution := NewCleanDistribution()
 
-	bucketSize := make([]bucketTotal, len(k[0].Partitions))
-
-	for i := range bucketSize {
-		bucketSize[i].bucket = i
-	}
+	bucketSize := NewBucketTotalSlice()
 
 	for topicIdx := len(k) - 1; topicIdx >= 0; topicIdx-- {
-		distribution.Topics[topicIdx].partOrder = make([]int, len(k[topicIdx].Partitions))
-
 		for partitionPos, kafkaPartition := range k[topicIdx].Partitions {
-			bucketSize[partitionPos].total += int64(kafkaPartition.Value)
-			bucket := bucketSize[partitionPos].bucket
-			distribution.BucketsTotal[bucket] = bucketSize[partitionPos].total
-			distribution.Topics[topicIdx].partOrder[bucket] = partitionPos
+			bucketSize[partitionPos].Total += int64(kafkaPartition.Value)
+			bucket := bucketSize[partitionPos].Bucket
+			distribution.BucketsTotal[bucket] = bucketSize[partitionPos].Total
+			distribution.Topics[topicIdx].PartOrder[bucket] = partitionPos
 		}
 		fmt.Println(k[topicIdx])
-		sort.Sort(byTotal(bucketSize))
+		sort.Sort(ByTotal(bucketSize))
 	}
 	return distribution
 }
+
+// Greedy Distribution
+func NewStochasticGreedyDistribution(sortingDistributionChance float32) Distribution {
+	k := *kafka.GetInstance()
+
+	distribution := NewCleanDistribution()
+
+	bucketSize := NewBucketTotalSlice()
+
+	for topicIdx := len(k) - 1; topicIdx >= 0; topicIdx-- {
+		for partitionPos, kafkaPartition := range k[topicIdx].Partitions {
+			bucketSize[partitionPos].Total += int64(kafkaPartition.Value)
+			bucket := bucketSize[partitionPos].Bucket
+			distribution.BucketsTotal[bucket] = bucketSize[partitionPos].Total
+			distribution.Topics[topicIdx].PartOrder[bucket] = partitionPos
+		}
+
+		if rnd.Float32() < sortingDistributionChance {
+			sort.Sort(ByTotal(bucketSize))
+		}
+	}
+	return distribution
+}
+
 
 // Average of the totals in the buckets
 func (d Distribution) avg() float64 {
@@ -129,6 +126,10 @@ func (d Distribution) GetFitness() int64 {
 	return max - min
 }
 
+func (d Distribution) ExponentialFitness() float64 {
+	return 1.0 / (1.0 + float64(d.GetFitness()))
+}
+
 func (d Distribution) chooseTopicsAndPartitions(numTopics int, numPartitions int) (topics []int, partitions []int) {
 	topics = rnd.Perm(len(d.Topics))[0:numTopics]
 	partitions = rnd.Perm(len(d.BucketsTotal))[0:numPartitions]
@@ -143,14 +144,14 @@ func (d Distribution) shuffleTopicPartitions(topic topic, partitions []int) {
 		iPos := partitions[i]
 		jPos := partitions[j]
 
-		// Subtracting from the total
+		// Subtracting from the Total
 		d.BucketsTotal[iPos] -= int64(topic.getPartitionSize(iPos))
 		d.BucketsTotal[jPos] -= int64(topic.getPartitionSize(jPos))
 
 		// Swap partitions
-		topic.partOrder[iPos], topic.partOrder[j] = topic.partOrder[j], topic.partOrder[i]
+		topic.PartOrder[iPos], topic.PartOrder[j] = topic.PartOrder[j], topic.PartOrder[i]
 
-		// Summing with the total
+		// Summing with the Total
 		d.BucketsTotal[iPos] += int64(topic.getPartitionSize(iPos))
 		d.BucketsTotal[jPos] += int64(topic.getPartitionSize(iPos))
 	})
@@ -170,30 +171,30 @@ func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
 	d.removeFromTotal(topics, buckets)
 
 	//Other topics rearrange
-	bucketSize := make([]bucketTotal, len(buckets))
+	bucketSize := make([]BucketTotal, len(buckets))
 
 	partitions := make([]int, len(buckets))
 
 	for i, bucket := range buckets {
-		bucketSize[i].bucket = bucket
-		bucketSize[i].total = d.BucketsTotal[bucket]
+		bucketSize[i].Bucket = bucket
+		bucketSize[i].Total = d.BucketsTotal[bucket]
 	}
 
 	for _, topicIdx := range topics {
-		sort.Sort(byTotal(bucketSize))
+		sort.Sort(ByTotal(bucketSize))
 		topic := d.Topics[topicIdx]
 
 		for i, bucket := range buckets {
-			partitions[i] = d.Topics[topicIdx].partOrder[bucket]
+			partitions[i] = d.Topics[topicIdx].PartOrder[bucket]
 		}
 
 		sort.Ints(partitions)
 
 		for i, bucket := range buckets {
 			partition := partitions[i]
-			bucketSize[i].total += int64(topic.getPartitionSize(partition))
-			d.BucketsTotal[bucket] = bucketSize[i].total
-			d.Topics[topicIdx].partOrder[bucket] = partition
+			bucketSize[i].Total += int64(topic.getPartitionSize(partition))
+			d.BucketsTotal[bucket] = bucketSize[i].Total
+			d.Topics[topicIdx].PartOrder[bucket] = partition
 		}
 		fmt.Println(d.Topics[topicIdx])
 	}
@@ -214,8 +215,8 @@ func (d Distribution) newSubDistribution(topics []int, buckets []int) Distributi
 	}
 
 	for i, topicIdx := range topics {
-		distribution.Topics[i].partOrder = make([]int, len(d.Topics[topicIdx].partOrder))
-		copy(distribution.Topics[i].partOrder, d.Topics[topicIdx].partOrder)
+		distribution.Topics[i].PartOrder = make([]int, len(d.Topics[topicIdx].PartOrder))
+		copy(distribution.Topics[i].PartOrder, d.Topics[topicIdx].PartOrder)
 		distribution.Topics[i].topicPos = d.Topics[topicIdx].topicPos
 	}
 
@@ -244,4 +245,17 @@ func (d Distribution) mutateIfBetter() {
 			d.Topics[topic.topicPos] = topic
 		}
 	}
+}
+
+func (d Distribution) BucketsSubtotal(start, end int) []BucketTotal {
+	subtotal := NewBucketTotalSlice()
+
+	for topicIdx := start; topicIdx <= end; topicIdx++ {
+		topic := d.Topics[topicIdx]
+
+		for i, partition := range topic.PartOrder {
+			subtotal[i].Total += int64(topic.getPartitionSize(partition))
+		}
+	}
+	return subtotal
 }

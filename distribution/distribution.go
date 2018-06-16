@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/ccal1/ga-distributed-network-balancing/kafka"
 )
+
+var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 type Distribution struct {
 	Topics       []topic
@@ -126,66 +129,120 @@ func (d Distribution) GetFitness() int64 {
 	return max - min
 }
 
-// Mutation GA
-func (d Distribution) mutateBucketsTopics(distribution Distribution) Distribution {
+func (d Distribution) chooseTopicsAndPartitions(numTopics int, numPartitions int) (topics []int, partitions []int) {
+	topics = rnd.Perm(len(d.Topics))[0:numTopics]
+	partitions = rnd.Perm(len(d.BucketsTotal))[0:numPartitions]
 
-	topicChosen := rand.Intn(len(distribution.Topics))
+	return
+}
 
-	shufflePositionsSize := rand.Intn(len(distribution.BucketsTotal))
-	shufflePositions := make([]int, shufflePositionsSize)
-	positionsList := make(map[int]int)
+func (d Distribution) shuffleTopicPartitions(topic topic, partitions []int) {
 
-	for i := 0; i < shufflePositionsSize; {
-		position := rand.Intn(len(distribution.BucketsTotal))
-		_, exists := positionsList[position]
-		if !exists {
-			positionsList[position] = 1
-			shufflePositions[i] = position
-			i++
+	// Shuffle partitions in topic chosen
+	rnd.Shuffle(len(partitions), func(i, j int) {
+		iPos := partitions[i]
+		jPos := partitions[j]
+
+		// Subtracting from the total
+		d.BucketsTotal[iPos] -= int64(topic.getPartitionSize(iPos))
+		d.BucketsTotal[jPos] -= int64(topic.getPartitionSize(jPos))
+
+		// Swap partitions
+		topic.partOrder[iPos], topic.partOrder[j] = topic.partOrder[j], topic.partOrder[i]
+
+		// Summing with the total
+		d.BucketsTotal[iPos] += int64(topic.getPartitionSize(iPos))
+		d.BucketsTotal[jPos] += int64(topic.getPartitionSize(iPos))
+	})
+}
+
+func (d Distribution) removeFromTotal(topics []int, buckets []int) {
+
+	for _, topicIdx := range topics {
+		topic := d.Topics[topicIdx]
+		for _, bucket := range buckets {
+			d.BucketsTotal[bucket] -= int64(topic.getPartitionSize(bucket))
 		}
 	}
+}
 
-	positionsUsed := make(map[int]int)
-	newPositions := make([]int, shufflePositionsSize)
+func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
+	d.removeFromTotal(topics, buckets)
 
-	for i := 0; i < shufflePositionsSize; {
-		position := rand.Intn(shufflePositionsSize)
-		_, exists := positionsUsed[positionsList[position]]
-		if !exists {
-			newPositions[i] = shufflePositions[position]
-			positionsUsed[shufflePositions[position]] = 1
-			i++
-		}
+	//Other topics rearrange
+	bucketSize := make([]bucketTotal, len(buckets))
+
+	partitions := make([]int, len(buckets))
+
+	for i, bucket := range buckets {
+		bucketSize[i].bucket = bucket
+		bucketSize[i].total = d.BucketsTotal[bucket]
 	}
 
-	tempValues := make([]int, len(distribution.BucketsTotal))
-
-	for i := 0; i < shufflePositionsSize; i++ {
-		tempValues[i] = distribution.Topics[topicChosen].partOrder[newPositions[i]]
-	}
-	for i := 0; i < shufflePositionsSize; i++ {
-		distribution.Topics[topicChosen].partOrder[shufflePositions[i]] = tempValues[i]
-	}
-
-	bucketSize := make([]bucketTotal, len(distribution.Topics[0].partOrder))
-
-	for i := range bucketSize {
-		bucketSize[i].bucket = i
-	}
-
-	for topicIdx := len(distribution.Topics) - 1; topicIdx >= 0; topicIdx-- {
-		distribution.Topics[topicIdx].partOrder = make([]int, len(distribution.Topics[topicIdx].partOrder))
-
-		for partitionPos, kafkaPartition := range distribution.Topics[topicIdx].partOrder {
-			bucketSize[partitionPos].total += int64(kafkaPartition)
-			if topicIdx != topicChosen {
-				bucket := bucketSize[partitionPos].bucket
-				distribution.BucketsTotal[bucket] = bucketSize[partitionPos].total
-				distribution.Topics[topicIdx].partOrder[bucket] = partitionPos
-			}
-		}
-		fmt.Println(distribution.Topics[topicIdx])
+	for _, topicIdx := range topics {
 		sort.Sort(byTotal(bucketSize))
+		topic := d.Topics[topicIdx]
+
+		for i, bucket := range buckets {
+			partitions[i] = d.Topics[topicIdx].partOrder[bucket]
+		}
+
+		sort.Ints(partitions)
+
+		for i, bucket := range buckets {
+			partition := partitions[i]
+			bucketSize[i].total += int64(topic.getPartitionSize(partition))
+			d.BucketsTotal[bucket] = bucketSize[i].total
+			d.Topics[topicIdx].partOrder[bucket] = partition
+		}
+		fmt.Println(d.Topics[topicIdx])
 	}
+}
+
+// Mutation GA
+func (d Distribution) mutateBucketsTopics(topics, partitions []int) {
+	d.shuffleTopicPartitions(d.Topics[topics[0]], partitions)
+
+	//Other topics rearrange
+	d.rearrangeTopics(topics[1:], partitions)
+}
+
+func (d Distribution) newSubDistribution(topics []int, buckets []int) Distribution {
+	distribution := Distribution{
+		Topics:       make([]topic, len(topics)),
+		BucketsTotal: make([]int64, len(d.BucketsTotal)),
+	}
+
+	for i, topicIdx := range topics {
+		distribution.Topics[i].partOrder = make([]int, len(d.Topics[topicIdx].partOrder))
+		copy(distribution.Topics[i].partOrder, d.Topics[topicIdx].partOrder)
+		distribution.Topics[i].topicPos = d.Topics[topicIdx].topicPos
+	}
+
+	copy(distribution.BucketsTotal, d.BucketsTotal)
+
 	return distribution
+}
+
+func (d Distribution) mutateIfBetter() {
+
+	// Number of partitions to swap
+	shuffleBucketsSize := rnd.Intn(len(d.BucketsTotal)) + 1
+
+	// Number of topics to mutate
+	shuffleTopicsSize := rnd.Intn(len(d.Topics)) + 1
+
+	// Generate randomly topics and partitions to mutate
+	topics, buckets := d.chooseTopicsAndPartitions(shuffleTopicsSize, shuffleBucketsSize)
+
+	subDistribution := d.newSubDistribution(topics, buckets)
+	d.mutateBucketsTopics(topics, buckets)
+
+	if d.GetFitness() > subDistribution.GetFitness() {
+		copy(d.BucketsTotal, subDistribution.BucketsTotal)
+		for _, topic := range subDistribution.Topics {
+			d.Topics[topic.topicPos] = topic
+		}
+	}
+
 }

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"sort"
 
-	"github.com/ccal1/ga-distributed-network-balancing/kafka"
+	"../kafka"
 )
 
 type Distribution struct {
@@ -135,36 +135,31 @@ func (d Distribution) mutateBucketsTopics(distribution Distribution) Distributio
 	shufflePositions := make([]int, shufflePositionsSize)
 	positionsList := make(map[int]int)
 
-	for i := 0; i < shufflePositionsSize; {
+	// populates positionsList and shufflePositions
+	for i := 0; i < shufflePositionsSize; i++ {
 		position := rand.Intn(len(distribution.BucketsTotal))
 		_, exists := positionsList[position]
 		if !exists {
 			positionsList[position] = 1
 			shufflePositions[i] = position
-			i++
 		}
 	}
 
 	positionsUsed := make(map[int]int)
 	newPositions := make([]int, shufflePositionsSize)
 
-	for i := 0; i < shufflePositionsSize; {
+	// populates newPositions and Positions Used
+	for i := 0; i < shufflePositionsSize; i++ {
 		position := rand.Intn(shufflePositionsSize)
 		_, exists := positionsUsed[positionsList[position]]
 		if !exists {
 			newPositions[i] = shufflePositions[position]
 			positionsUsed[shufflePositions[position]] = 1
-			i++
 		}
 	}
 
-	tempValues := make([]int, len(distribution.BucketsTotal))
-
 	for i := 0; i < shufflePositionsSize; i++ {
-		tempValues[i] = distribution.Topics[topicChosen].partOrder[newPositions[i]]
-	}
-	for i := 0; i < shufflePositionsSize; i++ {
-		distribution.Topics[topicChosen].partOrder[shufflePositions[i]] = tempValues[i]
+		distribution.Topics[topicChosen].partOrder[shufflePositions[i]] = distribution.Topics[topicChosen].partOrder[newPositions[i]]
 	}
 
 	bucketSize := make([]bucketTotal, len(distribution.Topics[0].partOrder))
@@ -173,6 +168,7 @@ func (d Distribution) mutateBucketsTopics(distribution Distribution) Distributio
 		bucketSize[i].bucket = i
 	}
 
+	// creates new distribution of topics
 	for topicIdx := len(distribution.Topics) - 1; topicIdx >= 0; topicIdx-- {
 		distribution.Topics[topicIdx].partOrder = make([]int, len(distribution.Topics[topicIdx].partOrder))
 
@@ -187,5 +183,6 @@ func (d Distribution) mutateBucketsTopics(distribution Distribution) Distributio
 		fmt.Println(distribution.Topics[topicIdx])
 		sort.Sort(byTotal(bucketSize))
 	}
+
 	return distribution
 }

@@ -244,5 +244,4 @@ func (d Distribution) mutateIfBetter() {
 			d.Topics[topic.topicPos] = topic
 		}
 	}
-
 }

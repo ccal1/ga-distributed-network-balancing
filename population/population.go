@@ -20,6 +20,8 @@ func NewPopulation(size int, initializationSortingChance float32) Population {
 	for i := range pop.Distributions {
 		pop.Distributions[i] = distribution.NewStochasticGreedyDistribution(initializationSortingChance)
 	}
+
+	pop.Distributions[0] = distribution.NewGreedyDistribution()
 	pop.Best = pop.Distributions[0]
 
 	for _, dist := range pop.Distributions {
@@ -119,3 +121,17 @@ func (p *Population) CreateChildEvolveAndReplaceIfBetter(numberOfMutations int) 
 	}
 }
 
+func (p *Population) EvolveTwoRandom(numberOfMutations int) {
+	fatherIdx, motherIdx := p.rouletteParentsSelection()
+	father, mother := p.Distributions[fatherIdx], p.Distributions[motherIdx]
+
+	father.MutateIfBetterNTimes(numberOfMutations)
+	mother.MutateIfBetterNTimes(numberOfMutations)
+
+	if father.GetFitness() < p.Best.GetFitness() {
+		p.Best = father
+	}
+	if mother.GetFitness() < p.Best.GetFitness() {
+		p.Best = mother
+	}
+}

@@ -73,7 +73,6 @@ func NewFromFile(fileName string) Kafka {
 		nameAndPartitions := strings.Split(topic, partitionSeparator)
 		kafka[i].Name = nameAndPartitions[0]
 		kafka[i].Partitions = make([]Partition, partitionsSize)
-		fmt.Println("Separate")
 
 		for j, partition := range strings.Split(nameAndPartitions[1], "\n") {
 			if partition == "" {

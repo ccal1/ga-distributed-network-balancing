@@ -1,7 +1,6 @@
 package distribution
 
 import (
-	"fmt"
 	"math/rand"
 	"sort"
 	"time"
@@ -36,7 +35,7 @@ func NewCleanDistribution() Distribution {
 		BucketsTotal: make([]int64, len(k[0].Partitions)),
 	}
 
-	for topicIdx := 0; topicIdx <= len(k); topicIdx++ {
+	for topicIdx := 0; topicIdx < len(k); topicIdx++ {
 		dist.Topics[topicIdx].PartOrder = make([]int, len(k[topicIdx].Partitions))
 		dist.Topics[topicIdx].topicPos = topicIdx
 	}
@@ -59,7 +58,6 @@ func NewGreedyDistribution() Distribution {
 			distribution.BucketsTotal[bucket] = bucketSize[partitionPos].Total
 			distribution.Topics[topicIdx].PartOrder[bucket] = partitionPos
 		}
-		fmt.Println(k[topicIdx])
 		sort.Sort(ByTotal(bucketSize))
 	}
 	return distribution
@@ -196,7 +194,6 @@ func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
 			d.BucketsTotal[bucket] = bucketSize[i].Total
 			d.Topics[topicIdx].PartOrder[bucket] = partition
 		}
-		fmt.Println(d.Topics[topicIdx])
 	}
 }
 
@@ -258,4 +255,10 @@ func (d Distribution) BucketsSubtotal(start, end int) []BucketTotal {
 		}
 	}
 	return subtotal
+}
+
+func (d *Distribution) MutateIfBetterNTimes(times int){
+	for i := 0 ; i < times; i++ {
+		d.mutateIfBetter()
+	}
 }

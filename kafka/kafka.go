@@ -26,6 +26,7 @@ func NewRandomKafka(partitions int, topics int) Kafka {
 	return kafka
 }
 
+
 // Get the partitions value
 func (k Kafka) GetTopicsPartition(topic, partition int) int {
 	return k[topic].Partitions[partition].Value

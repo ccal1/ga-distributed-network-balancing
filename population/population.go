@@ -31,7 +31,7 @@ func NewPopulation(size int, initializationSortingChance float32) Population {
 	return pop
 }
 
-func (p Population) rouletteParentsSelection() (distribution.Distribution, distribution.Distribution) {
+func (p *Population) rouletteParentsSelection() (int, int) {
 	accumulatedFitness := make([]float64, len(p.Distributions))
 	sumFitness := 0.0
 
@@ -48,12 +48,15 @@ func (p Population) rouletteParentsSelection() (distribution.Distribution, distr
 	sort.Float64s(randomChoices)
 	choicePos := 0
 
-	parents := make([]distribution.Distribution, 2)
+	parents := make([]int, 2)
 
 	for i, fit := range accumulatedFitness {
 		if randomChoices[choicePos] <= fit {
-			parents[choicePos] = p.Distributions[i]
+			parents[choicePos] = i
 			choicePos++
+		}
+		if choicePos == 2 {
+			break
 		}
 	}
 
@@ -61,7 +64,7 @@ func (p Population) rouletteParentsSelection() (distribution.Distribution, distr
 }
 
 // Performs crossover with a ordered part from the father and another one from the mother
-func (p Population) crossOver(father, mother distribution.Distribution) distribution.Distribution {
+func crossOver(father, mother distribution.Distribution) distribution.Distribution {
 	k :=  *kafka.GetInstance()
 	splitPos := rand.Intn(len(k))
 
@@ -70,7 +73,7 @@ func (p Population) crossOver(father, mother distribution.Distribution) distribu
 	fatherSubtotal := father.BucketsSubtotal(0, splitPos)
 	sort.Sort(distribution.ByTotal(fatherSubtotal))
 
-	motherSubtotal := mother.BucketsSubtotal(splitPos + 1, len(k))
+	motherSubtotal := mother.BucketsSubtotal(splitPos + 1, len(k)-1)
 	sort.Sort(distribution.ReverseByTotal(motherSubtotal))
 
 	for i := range child.BucketsTotal {
@@ -83,12 +86,36 @@ func (p Population) crossOver(father, mother distribution.Distribution) distribu
 		}
 	}
 
-	for topicIdx := splitPos + 1; topicIdx <= len(k) ; topicIdx++ {
+	for topicIdx := splitPos + 1; topicIdx < len(k) ; topicIdx++ {
 		for i, bucket := range motherSubtotal {
 			child.Topics[topicIdx].PartOrder[i] = mother.Topics[topicIdx].PartOrder[bucket.Bucket]
 		}
 	}
 
 	return child
+}
+
+func (p *Population) CreateChildEvolveAndReplaceIfBetter(numberOfMutations int) {
+	fatherIdx, motherIdx := p.rouletteParentsSelection()
+	father, mother := p.Distributions[fatherIdx], p.Distributions[motherIdx]
+
+	child := crossOver(father, mother)
+
+	child.MutateIfBetterNTimes(numberOfMutations)
+
+	var worstParentIdx int
+	if father.GetFitness() < mother.GetFitness() {
+		worstParentIdx = motherIdx
+	} else {
+		worstParentIdx = fatherIdx
+	}
+
+	if child.GetFitness() < p.Distributions[worstParentIdx].GetFitness() {
+		p.Distributions[worstParentIdx] = child
+	}
+
+	if child.GetFitness() < p.Best.GetFitness() {
+		p.Best = child
+	}
 }
 

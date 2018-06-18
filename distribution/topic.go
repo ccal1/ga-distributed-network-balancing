@@ -8,7 +8,12 @@ type topic struct {
 }
 
 // Return the partition value
+func (t topic) getBucketPartitionSize(bucket int) int {
+	k := kafka.GetInstance()
+	return k.GetTopicsPartition(t.topicPos, t.PartOrder[bucket])
+}
+
 func (t topic) getPartitionSize(partition int) int {
 	k := kafka.GetInstance()
-	return k.GetTopicsPartition(t.topicPos, t.PartOrder[partition])
+	return k.GetTopicsPartition(t.topicPos, partition)
 }

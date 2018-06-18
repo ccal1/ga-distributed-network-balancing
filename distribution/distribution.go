@@ -23,7 +23,7 @@ func (d *Distribution) calculateTotals() {
 	d.BucketsTotal = make([]int64, len(d.Topics[0].PartOrder))
 	for _, topic := range d.Topics {
 		for i := range topic.PartOrder {
-			d.BucketsTotal[i] += int64(topic.getPartitionSize(i))
+			d.BucketsTotal[i] += int64(topic.getBucketPartitionSize(i))
 		}
 	}
 }
@@ -88,7 +88,7 @@ func NewStochasticGreedyDistribution(sortingDistributionChance float32) Distribu
 
 
 // Average of the totals in the buckets
-func (d Distribution) avg() float64 {
+func (d *Distribution) avg() float64 {
 	var total int64
 	for _, bucket := range d.BucketsTotal {
 		total += bucket
@@ -97,7 +97,7 @@ func (d Distribution) avg() float64 {
 }
 
 // Standard Deviation of the totals in the buckets
-func (d Distribution) bucketStdDev() []float64 {
+func (d *Distribution) bucketStdDev() []float64 {
 	avg := d.avg()
 
 	stdDev := make([]float64, len(d.BucketsTotal))
@@ -109,7 +109,7 @@ func (d Distribution) bucketStdDev() []float64 {
 }
 
 // Fitness from distribution: Difference between computer with bigger value and computer with smaller value
-func (d Distribution) GetFitness() int64 {
+func (d *Distribution) GetFitness() int64 {
 	min := d.BucketsTotal[0]
 	max := min
 	for _, bucket := range d.BucketsTotal {
@@ -124,48 +124,48 @@ func (d Distribution) GetFitness() int64 {
 	return max - min
 }
 
-func (d Distribution) ExponentialFitness() float64 {
+func (d *Distribution) ExponentialFitness() float64 {
 	return 1.0 / (1.0 + float64(d.GetFitness()))
 }
 
-func (d Distribution) chooseTopicsAndPartitions(numTopics int, numPartitions int) (topics []int, partitions []int) {
+func (d *Distribution) chooseTopicsAndPartitions(numTopics int, numPartitions int) (topics []int, partitions []int) {
 	topics = rnd.Perm(len(d.Topics))[0:numTopics]
 	partitions = rnd.Perm(len(d.BucketsTotal))[0:numPartitions]
+	sort.Sort(sort.Reverse(sort.IntSlice(topics)))
 
 	return
 }
 
-func (d Distribution) shuffleTopicPartitions(topic topic, partitions []int) {
-
+func (d *Distribution) shuffleTopicPartitions(topic topic, partitions []int) {
 	// Shuffle partitions in topic chosen
 	rnd.Shuffle(len(partitions), func(i, j int) {
 		iPos := partitions[i]
 		jPos := partitions[j]
 
 		// Subtracting from the Total
-		d.BucketsTotal[iPos] -= int64(topic.getPartitionSize(iPos))
-		d.BucketsTotal[jPos] -= int64(topic.getPartitionSize(jPos))
+		d.BucketsTotal[iPos] -= int64(topic.getBucketPartitionSize(iPos))
+		d.BucketsTotal[jPos] -= int64(topic.getBucketPartitionSize(jPos))
 
 		// Swap partitions
-		topic.PartOrder[iPos], topic.PartOrder[j] = topic.PartOrder[j], topic.PartOrder[i]
+		topic.PartOrder[iPos], topic.PartOrder[jPos] = topic.PartOrder[jPos], topic.PartOrder[iPos]
+		partitions[i], partitions[j] = partitions[j], partitions[i]
 
 		// Summing with the Total
-		d.BucketsTotal[iPos] += int64(topic.getPartitionSize(iPos))
-		d.BucketsTotal[jPos] += int64(topic.getPartitionSize(iPos))
+		d.BucketsTotal[iPos] += int64(topic.getBucketPartitionSize(iPos))
+		d.BucketsTotal[jPos] += int64(topic.getBucketPartitionSize(jPos))
 	})
 }
 
-func (d Distribution) removeFromTotal(topics []int, buckets []int) {
-
+func (d *Distribution) removeFromTotal(topics []int, buckets []int) {
 	for _, topicIdx := range topics {
 		topic := d.Topics[topicIdx]
 		for _, bucket := range buckets {
-			d.BucketsTotal[bucket] -= int64(topic.getPartitionSize(bucket))
+			d.BucketsTotal[bucket] -= int64(topic.getBucketPartitionSize(bucket))
 		}
 	}
 }
 
-func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
+func (d *Distribution) rearrangeTopics(topics []int, buckets []int) {
 	d.removeFromTotal(topics, buckets)
 
 	//Other topics rearrange
@@ -173,6 +173,7 @@ func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
 
 	partitions := make([]int, len(buckets))
 
+	// Set initial buckets total
 	for i, bucket := range buckets {
 		bucketSize[i].Bucket = bucket
 		bucketSize[i].Total = d.BucketsTotal[bucket]
@@ -198,14 +199,23 @@ func (d Distribution) rearrangeTopics(topics []int, buckets []int) {
 }
 
 // Mutation GA
-func (d Distribution) mutateBucketsTopics(topics, partitions []int) {
+func (d *Distribution) mutateBucketsTopics(topics, partitions []int) {
+
 	d.shuffleTopicPartitions(d.Topics[topics[0]], partitions)
 
 	//Other topics rearrange
 	d.rearrangeTopics(topics[1:], partitions)
 }
 
-func (d Distribution) newSubDistribution(topics []int, buckets []int) Distribution {
+func (d *Distribution) getTotal() int64 {
+	var total int64
+	for _, subtotal := range d.BucketsTotal {
+		total += subtotal
+	}
+	return total
+}
+
+func (d *Distribution) newSubDistribution(topics []int, buckets []int) Distribution {
 	distribution := Distribution{
 		Topics:       make([]topic, len(topics)),
 		BucketsTotal: make([]int64, len(d.BucketsTotal)),
@@ -222,7 +232,7 @@ func (d Distribution) newSubDistribution(topics []int, buckets []int) Distributi
 	return distribution
 }
 
-func (d Distribution) mutateIfBetter() {
+func (d *Distribution) mutateIfBetter() {
 
 	// Number of partitions to swap
 	shuffleBucketsSize := rnd.Intn(len(d.BucketsTotal)) + 1
@@ -244,14 +254,14 @@ func (d Distribution) mutateIfBetter() {
 	}
 }
 
-func (d Distribution) BucketsSubtotal(start, end int) []BucketTotal {
+func (d *Distribution) BucketsSubtotal(start, end int) []BucketTotal {
 	subtotal := NewBucketTotalSlice()
 
 	for topicIdx := start; topicIdx <= end; topicIdx++ {
 		topic := d.Topics[topicIdx]
 
 		for i, partition := range topic.PartOrder {
-			subtotal[i].Total += int64(topic.getPartitionSize(partition))
+			subtotal[i].Total += int64(topic.getBucketPartitionSize(partition))
 		}
 	}
 	return subtotal

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ccal1/ga-distributed-network-balancing/kafka"
+	"math"
 )
 
 var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -108,6 +109,31 @@ func (d *Distribution) bucketStdDev() []float64 {
 	return stdDev
 }
 
+func (d *Distribution) bucketsChance() []float64 {
+	stdDevs := d.bucketStdDev()
+	maxDev := 0.0
+	for _, dev := range stdDevs {
+		maxDev = math.Max(maxDev, dev)
+	}
+	chances := make([]float64, len(stdDevs))
+
+	for i, dev := range stdDevs {
+		chances[i] = dev/(maxDev*2)
+	}
+	return chances
+}
+
+func (d *Distribution) chooseBuckets() []int {
+	chances := d.bucketsChance()
+	var buckets []int
+	for i, chance := range chances {
+		if rnd.Float64() < chance {
+			buckets = append(buckets, i)
+		}
+	}
+	return buckets
+}
+
 // Fitness from distribution: Difference between computer with bigger value and computer with smaller value
 func (d *Distribution) GetFitness() int64 {
 	min := d.BucketsTotal[0]
@@ -128,10 +154,10 @@ func (d *Distribution) ExponentialFitness() float64 {
 	return 1.0 / (1.0 + float64(d.GetFitness()))
 }
 
-func (d *Distribution) chooseTopicsAndPartitions(numTopics int, numPartitions int) (topics []int, partitions []int) {
+func (d *Distribution) chooseTopicsAndBuckets(numTopics int, numPartitions int) (topics []int, partitions []int) {
 	topics = rnd.Perm(len(d.Topics))[0:numTopics]
 	partitions = rnd.Perm(len(d.BucketsTotal))[0:numPartitions]
-	sort.Sort(sort.Reverse(sort.IntSlice(topics)))
+	//sort.Sort(sort.Reverse(sort.IntSlice(topics)))
 
 	return
 }
@@ -233,15 +259,12 @@ func (d *Distribution) newSubDistribution(topics []int, buckets []int) Distribut
 }
 
 func (d *Distribution) mutateIfBetter() {
-
-	// Number of partitions to swap
-	shuffleBucketsSize := rnd.Intn(len(d.BucketsTotal)) + 1
-
 	// Number of topics to mutate
-	shuffleTopicsSize := rnd.Intn(len(d.Topics)) + 1
+	shuffleTopicsSize := rnd.Intn(len(d.Topics)/2) + 1
 
 	// Generate randomly topics and partitions to mutate
-	topics, buckets := d.chooseTopicsAndPartitions(shuffleTopicsSize, shuffleBucketsSize)
+	topics := rnd.Perm(len(d.Topics))[:shuffleTopicsSize]
+	buckets := d.chooseBuckets()
 
 	subDistribution := d.newSubDistribution(topics, buckets)
 	d.mutateBucketsTopics(topics, buckets)
